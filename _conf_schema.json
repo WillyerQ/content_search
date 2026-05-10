@@ -6,7 +6,7 @@
     "hint": "登录 xiaohongshu.com 后 F12 → Application → Cookies → 复制整个 Cookie 字符串"
   },
   "dy_cookie": {
-    "description": "抖音网页版 Cookie",
+    "description": "抖音 Cookie（可选，手机版方案不需要也能搜索）",
     "type": "string",
     "default": "",
     "hint": "支持两种格式：① 常规 Cookie 字符串 ② EditThisCookie 等插件导出的 JSON 数组"
