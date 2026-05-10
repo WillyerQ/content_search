@@ -95,41 +95,42 @@ class ContentSearchPlugin(Star):
     async def _search_douyin(self, keyword: str) -> list:
         logger.info(f"[ContentSearch] 搜索抖音: {keyword}")
         try:
-            from playwright.sync_api import sync_playwright
-            with sync_playwright() as p:
-                b = p.chromium.launch(headless=True, args=["--no-sandbox"])
-                ctx = b.new_context(
-                    user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
-                    viewport={"width": 390, "height": 844}, locale="zh-CN"
-                )
-                page = ctx.new_page()
-                page.goto(f"https://www.douyin.com/search/{keyword}", wait_until="domcontentloaded", timeout=60000)
-                page.wait_for_timeout(8000)
-                for _ in range(3):
-                    page.evaluate("window.scrollBy(0, 600)")
-                    page.wait_for_timeout(2000)
-                all_data = page.evaluate("""() => {
-                    const results = [];
-                    const scripts = document.querySelectorAll('script');
-                    scripts.forEach(s => {
-                        const text = s.textContent || '';
-                        if (!text.includes('aweme_info')) return;
-                        const parts = text.split('"aweme_info":');
-                        for (let i = 1; i < parts.length; i++) {
-                            let depth = 0, j = 0;
-                            for (; j < parts[i].length; j++) {
-                                if (parts[i][j] === '{') depth++;
-                                else if (parts[i][j] === '}') { depth--; if (depth === 0) { j++; break; } }
-                            }
-                            try {
-                                const obj = JSON.parse(parts[i].slice(0, j));
-                                if (obj.aweme_id) results.push(obj);
-                            } catch(e) {}
+            from playwright.async_api import async_playwright
+            p = await async_playwright().start()
+            b = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            ctx = await b.new_context(
+                user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+                viewport={"width": 390, "height": 844}, locale="zh-CN"
+            )
+            page = await ctx.new_page()
+            await page.goto(f"https://www.douyin.com/search/{keyword}", wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_timeout(8000)
+            for _ in range(3):
+                await page.evaluate("window.scrollBy(0, 600)")
+                await page.wait_for_timeout(2000)
+            all_data = await page.evaluate("""() => {
+                const results = [];
+                const scripts = document.querySelectorAll('script');
+                scripts.forEach(s => {
+                    const text = s.textContent || '';
+                    if (!text.includes('aweme_info')) return;
+                    const parts = text.split('"aweme_info":');
+                    for (let i = 1; i < parts.length; i++) {
+                        let depth = 0, j = 0;
+                        for (; j < parts[i].length; j++) {
+                            if (parts[i][j] === '{') depth++;
+                            else if (parts[i][j] === '}') { depth--; if (depth === 0) { j++; break; } }
                         }
-                    });
-                    return results;
-                }""")
-                b.close()
+                        try {
+                            const obj = JSON.parse(parts[i].slice(0, j));
+                            if (obj.aweme_id) results.push(obj);
+                        } catch(e) {}
+                    }
+                });
+                return results;
+            }""")
+            await b.close()
+            await p.stop()
             max_n = int(await self._get_config("max_results", 10))
             return self._extract_dy_videos(all_data[:max_n*2])
         except Exception as e:
