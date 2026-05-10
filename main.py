@@ -98,7 +98,8 @@ class ContentSearchPlugin(Star):
         logger.info(f"[ContentSearch] 搜索小红书: {keyword}")
         browser = await self._get_browser()
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            proxy={"server": os.environ.get("http_proxy", "")} if os.environ.get("http_proxy") else None
         )
 
         # 设置 Cookie
@@ -163,7 +164,8 @@ class ContentSearchPlugin(Star):
         logger.info(f"[ContentSearch] 搜索抖音: {keyword}")
         browser = await self._get_browser()
         context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            proxy={"server": os.environ.get("http_proxy", "")} if os.environ.get("http_proxy") else None
         )
 
         cookie_str = await self._get_config("dy_cookie", "")
