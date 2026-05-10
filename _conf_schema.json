@@ -1,0 +1,29 @@
+{
+  "xhs_cookie": {
+    "description": "小红书网页版 Cookie（登录后从开发者工具复制）",
+    "type": "string",
+    "default": "",
+    "hint": "登录 xiaohongshu.com 后 F12 → Application → Cookies → 复制整个 Cookie 字符串"
+  },
+  "dy_cookie": {
+    "description": "抖音网页版 Cookie",
+    "type": "string",
+    "default": "",
+    "hint": "登录 douyin.com 后 F12 → Application → Cookies → 复制整个 Cookie 字符串"
+  },
+  "max_results": {
+    "description": "每个平台最多返回多少条结果",
+    "type": "int",
+    "default": 10
+  },
+  "similarity_threshold": {
+    "description": "相似度阈值（0-100），高于此值视为重复",
+    "type": "int",
+    "default": 85
+  },
+  "headless": {
+    "description": "是否无头模式（设为 false 可看到浏览器窗口）",
+    "type": "bool",
+    "default": true
+  }
+}

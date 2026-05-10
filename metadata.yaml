@@ -1,0 +1,8 @@
+name: "content_search"
+display_name: "内容搜索聚合"
+short_desc: "搜索小红书、抖音等平台内容，自动去重聚合"
+desc: "支持搜索小红书和抖音指定关键词，自动去除相同或相似的重复内容，聚合返回结果。"
+version: "1.0.0"
+author: "AstrBot"
+repo: "https://github.com/WillyerQ/astrbot_plugin_content_search"
+astrbot_version: ">=4.16"
