@@ -10,6 +10,7 @@ import time
 from datetime import datetime
 from typing import Optional
 from simhash import Simhash
+from playwright_stealth.stealth import Stealth
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
@@ -108,6 +109,7 @@ class ContentSearchPlugin(Star):
             await self._set_cookies(context, ".xiaohongshu.com", cookie_str)
 
         page = await context.new_page()
+        await Stealth().apply_stealth_async(page)
         results = []
         try:
             url = f"https://www.xiaohongshu.com/search_result?keyword={_encode(keyword)}&source=web_search_result_notes"
@@ -173,6 +175,7 @@ class ContentSearchPlugin(Star):
             await self._set_cookies(context, ".douyin.com", cookie_str)
 
         page = await context.new_page()
+        await Stealth().apply_stealth_async(page)
         results = []
         try:
             url = f"https://www.douyin.com/search/{_encode(keyword)}?type=general"
