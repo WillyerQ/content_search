@@ -94,56 +94,47 @@ class ContentSearchPlugin(Star):
 
     async def _search_douyin(self, keyword: str) -> list:
         logger.info(f"[ContentSearch] 搜索抖音: {keyword}")
-        
-        cookie_str = await self._get_config("dy_cookie", "")
-        if not cookie_str:
-            return [{"platform": "抖音", "title": "❌ 未配置抖音 Cookie", "text": ""}]
-
-        cookie = self._parse_cookie(cookie_str)
-        encoded_kw = urllib.parse.quote(keyword)
-        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-
-        params = {
-            "keyword": encoded_kw,
-            "search_channel": "aweme_general",
-            "sort_type": "0",
-            "publish_time": "0",
-            "search_source": "normal_search",
-            "query_correct_type": "1",
-            "is_filter_search": "0",
-            "offset": "0",
-            "count": "10",
-            **DOUYIN_COMMON_PARAMS,
-        }
-
-        # Build query string and sign
-        query_str = "&".join(f"{k}={v}" for k, v in params.items())
         try:
-            x_bogus = self._sign_request(query_str, ua)
-            params["X-Bogus"] = x_bogus
+            from playwright.sync_api import sync_playwright
+            with sync_playwright() as p:
+                b = p.chromium.launch(headless=True, args=["--no-sandbox"])
+                ctx = b.new_context(
+                    user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15",
+                    viewport={"width": 390, "height": 844}, locale="zh-CN"
+                )
+                page = ctx.new_page()
+                page.goto(f"https://www.douyin.com/search/{keyword}", wait_until="domcontentloaded", timeout=60000)
+                page.wait_for_timeout(8000)
+                for _ in range(3):
+                    page.evaluate("window.scrollBy(0, 600)")
+                    page.wait_for_timeout(2000)
+                all_data = page.evaluate("""() => {
+                    const results = [];
+                    const scripts = document.querySelectorAll('script');
+                    scripts.forEach(s => {
+                        const text = s.textContent || '';
+                        if (!text.includes('aweme_info')) return;
+                        const parts = text.split('"aweme_info":');
+                        for (let i = 1; i < parts.length; i++) {
+                            let depth = 0, j = 0;
+                            for (; j < parts[i].length; j++) {
+                                if (parts[i][j] === '{') depth++;
+                                else if (parts[i][j] === '}') { depth--; if (depth === 0) { j++; break; } }
+                            }
+                            try {
+                                const obj = JSON.parse(parts[i].slice(0, j));
+                                if (obj.aweme_id) results.push(obj);
+                            } catch(e) {}
+                        }
+                    });
+                    return results;
+                }""")
+                b.close()
+            max_n = int(await self._get_config("max_results", 10))
+            return self._extract_dy_videos(all_data[:max_n*2])
         except Exception as e:
-            logger.error(f"[ContentSearch] 签名失败: {e}")
-            return [{"platform": "抖音", "title": f"❌ 签名失败: {str(e)[:50]}", "text": ""}]
-
-        headers = {
-            "User-Agent": ua,
-            "Cookie": cookie,
-            "Referer": f"https://www.douyin.com/search/{encoded_kw}",
-        }
-
-        try:
-            r = requests.get(
-                "https://www.douyin.com/aweme/v1/web/general/search/single/",
-                params=params, headers=headers, timeout=15
-            )
-            data = r.json()
-        except Exception as e:
-            return [{"platform": "抖音", "title": f"❌ 请求失败: {str(e)[:50]}", "text": ""}]
-
-        items = data.get("data", [])
-        if not items:
-            msg = data.get("status_msg", "") or data.get("search_nil_info", {}).get("search_nil_type", "无结果")
-            return [{"platform": "抖音", "title": f"未找到结果 ({msg})", "text": ""}]
+            logger.error(f"[ContentSearch] 抖音搜索失败: {e}")
+            return [{"platform": "抖音", "title": f"❌ 失败: {str(e)[:50]}", "text": ""}]
 
         max_n = int(await self._get_config("max_results", 10))
         results = []
