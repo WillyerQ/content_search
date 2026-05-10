@@ -9,7 +9,7 @@
     "description": "抖音网页版 Cookie",
     "type": "string",
     "default": "",
-    "hint": "登录 douyin.com 后 F12 → Application → Cookies → 复制整个 Cookie 字符串"
+    "hint": "支持两种格式：① 常规 Cookie 字符串 ② EditThisCookie 等插件导出的 JSON 数组"
   },
   "max_results": {
     "description": "每个平台最多返回多少条结果",

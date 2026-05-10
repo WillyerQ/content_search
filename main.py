@@ -1,319 +1,263 @@
 """
-内容搜索聚合插件
-搜索小红书、抖音，自动去重后返回结果
+内容搜索聚合插件 v2
+搜索抖音（API + X-Bogus 签名）
 """
 import asyncio
 import json
 import os
-import re
-import time
-from datetime import datetime
+import urllib.parse
 from typing import Optional
 from simhash import Simhash
-from playwright_stealth.stealth import Stealth
+import execjs
+import requests
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger
 
+PLUGIN_DIR = os.path.dirname(os.path.abspath(__file__))
 
-@register("content_search", "AstrBot", "内容搜索聚合", "1.0.0")
+DOUYIN_COMMON_PARAMS = {
+    "device_platform": "webapp",
+    "aid": "6383",
+    "channel": "channel_pc_web",
+    "cookie_enabled": "true",
+    "browser_language": "zh-CN",
+    "browser_platform": "Win32",
+    "browser_name": "Edge",
+    "browser_version": "120.0.0.0",
+    "browser_online": "true",
+    "engine_name": "Blink",
+    "os_name": "Windows",
+    "os_version": "10",
+    "engine_version": "120.0.0.0",
+    "platform": "PC",
+    "screen_width": "1920",
+    "screen_height": "1200",
+}
+
+
+@register("content_search", "AstrBot", "内容搜索聚合", "2.0.0")
 class ContentSearchPlugin(Star):
     def __init__(self, context: Context):
         super().__init__(context)
+        self._dy_js = None
         self._browser = None
-        self._lock = asyncio.Lock()
 
     async def _get_config(self, key, default=None):
         try:
             return self.context.get_config(key) or default
-        except Exception:
+        except:
             return default
 
-    async def _get_browser(self):
-        """获取或创建 Playwright 浏览器实例"""
-        if self._browser is None:
-            from playwright.async_api import async_playwright
-            p = await async_playwright().start()
-            headless = await self._get_config("headless", True)
-            self._browser = await p.chromium.launch(
-                headless=headless,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled"]
-            )
-            logger.info("[ContentSearch] 浏览器已启动")
-        return self._browser
-
-    @filter.command("搜索")
-    async def search_cmd(self, event: AstrMessageEvent):
-        """搜索内容：/搜索 <平台> <关键词>"""
-        msg = event.message_str.strip()
-        parts = msg.split(maxsplit=2)
-        if len(parts) < 3:
-            yield event.plain_result("格式：/搜索 <平台> <关键词>\n平台：小红书、抖音、全部")
-            return
-
-        platform = parts[1]
-        keyword = parts[2]
-
-        yield event.plain_result(f"🔍 正在搜索「{keyword}」（{platform}）...")
-
-        try:
-            results = []
-            platforms = []
-
-            if platform in ("小红书", "全部"):
-                platforms.append(self._search_xiaohongshu)
-            if platform in ("抖音", "全部"):
-                platforms.append(self._search_douyin)
-
-            if not platforms:
-                yield event.plain_result("平台仅支持：小红书、抖音、全部")
-                return
-
-            for search_func in platforms:
-                try:
-                    items = await search_func(keyword)
-                    results.extend(items)
-                except Exception as e:
-                    logger.error(f"[ContentSearch] 搜索失败: {e}")
-                    yield event.plain_result(f"⚠️ 搜索出错: {str(e)[:100]}")
-
-            if not results:
-                yield event.plain_result("没有找到结果")
-                return
-
-            # 去重
-            threshold = int(await self._get_config("similarity_threshold", 85))
-            unique = self._deduplicate(results, threshold)
-
-            # 格式化输出
-            reply = self._format_results(platform, keyword, unique)
-            yield event.plain_result(reply)
-
-        except Exception as e:
-            logger.error(f"[ContentSearch] 异常: {e}")
-            yield event.plain_result(f"❌ 搜索失败: {str(e)[:200]}")
-
-    async def _search_xiaohongshu(self, keyword: str) -> list:
-        """搜索小红书"""
-        logger.info(f"[ContentSearch] 搜索小红书: {keyword}")
-        browser = await self._get_browser()
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            proxy={"server": os.environ.get("http_proxy", "")} if os.environ.get("http_proxy") else None
-        )
-
-        # 设置 Cookie
-        cookie_str = await self._get_config("xhs_cookie", "")
-        if cookie_str:
-            await self._set_cookies(context, ".xiaohongshu.com", cookie_str)
-
-        page = await context.new_page()
-        await Stealth().apply_stealth_async(page)
-        results = []
-        try:
-            url = f"https://www.xiaohongshu.com/search_result?keyword={_encode(keyword)}&source=web_search_result_notes"
-            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
-
-            # 等待搜索结果加载
+    def _parse_cookie(self, raw: str) -> str:
+        """解析 Cookie，支持常规字符串和 JSON 数组两种格式"""
+        raw = raw.strip()
+        
+        # 尝试 JSON 数组格式（EditThisCookie 等插件导出）
+        if raw.startswith("["):
             try:
-                await page.wait_for_selector(".feeds-page .note-item", timeout=15000)
-            except Exception:
+                cookies = json.loads(raw)
+                pairs = []
+                for c in cookies:
+                    name = c.get("name", "")
+                    value = c.get("value", "")
+                    if name and value:
+                        clean_v = "".join(ch for ch in value if ord(ch) < 128)
+                        if clean_v:
+                            pairs.append(f"{name}={clean_v}")
+                if pairs:
+                    return "; ".join(pairs)
+            except:
                 pass
-            await asyncio.sleep(2)
+        
+        # 常规 Cookie 字符串格式
+        parts = []
+        for item in raw.split(";"):
+            item = item.strip()
+            if "=" in item:
+                n, v = item.split("=", 1)
+                if all(ord(c) < 128 for c in n + v):
+                    parts.append(f"{n.strip()}={v.strip()}")
+        return "; ".join(parts)
 
-            cards = await page.query_selector_all(".note-item")
-            max_n = int(await self._get_config("max_results", 10))
+    def _get_douyin_js(self):
+        if self._dy_js is None:
+            js_path = os.path.join(PLUGIN_DIR, "douyin.js")
+            with open(js_path, "r", encoding="utf-8") as f:
+                self._dy_js = execjs.compile(f.read())
+        return self._dy_js
 
-            for card in cards[:max_n]:
-                try:
-                    title_el = await card.query_selector(".title")
-                    title = (await title_el.inner_text()).strip() if title_el else "无标题"
-
-                    link_el = await card.query_selector("a")
-                    link = ""
-                    if link_el:
-                        link = await link_el.get_attribute("href") or ""
-                        if link and not link.startswith("http"):
-                            link = "https://www.xiaohongshu.com" + link
-
-                    desc_el = await card.query_selector(".desc")
-                    desc = (await desc_el.inner_text()).strip()[:100] if desc_el else ""
-
-                    like_el = await card.query_selector(".like-wrapper .count")
-                    likes = (await like_el.inner_text()).strip() if like_el else ""
-
-                    results.append({
-                        "platform": "小红书",
-                        "title": title,
-                        "desc": desc,
-                        "url": link,
-                        "likes": likes,
-                        "text": title + " " + desc
-                    })
-                except Exception:
-                    continue
-        finally:
-            await page.close()
-            await context.close()
-
-        logger.info(f"[ContentSearch] 小红书获取到 {len(results)} 条")
-        return results
+    def _sign_request(self, query: str, ua: str) -> str:
+        js = self._get_douyin_js()
+        return js.call("sign", query, ua)
 
     async def _search_douyin(self, keyword: str) -> list:
-        """搜索抖音"""
         logger.info(f"[ContentSearch] 搜索抖音: {keyword}")
-        browser = await self._get_browser()
-        context = await browser.new_context(
-            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            proxy={"server": os.environ.get("http_proxy", "")} if os.environ.get("http_proxy") else None
-        )
-
+        
         cookie_str = await self._get_config("dy_cookie", "")
-        if cookie_str:
-            await self._set_cookies(context, ".douyin.com", cookie_str)
+        if not cookie_str:
+            return [{"platform": "抖音", "title": "❌ 未配置抖音 Cookie", "text": ""}]
 
-        page = await context.new_page()
-        await Stealth().apply_stealth_async(page)
-        results = []
+        cookie = self._parse_cookie(cookie_str)
+        encoded_kw = urllib.parse.quote(keyword)
+        ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+
+        params = {
+            "keyword": encoded_kw,
+            "search_channel": "aweme_general",
+            "sort_type": "0",
+            "publish_time": "0",
+            "search_source": "normal_search",
+            "query_correct_type": "1",
+            "is_filter_search": "0",
+            "offset": "0",
+            "count": "10",
+            **DOUYIN_COMMON_PARAMS,
+        }
+
+        # Build query string and sign
+        query_str = "&".join(f"{k}={v}" for k, v in params.items())
         try:
-            url = f"https://www.douyin.com/search/{_encode(keyword)}?type=general"
-            await page.goto(url, timeout=30000, wait_until="domcontentloaded")
-            await asyncio.sleep(3)
+            x_bogus = self._sign_request(query_str, ua)
+            params["X-Bogus"] = x_bogus
+        except Exception as e:
+            logger.error(f"[ContentSearch] 签名失败: {e}")
+            return [{"platform": "抖音", "title": f"❌ 签名失败: {str(e)[:50]}", "text": ""}]
 
-            # 等待视频卡片加载
+        headers = {
+            "User-Agent": ua,
+            "Cookie": cookie,
+            "Referer": f"https://www.douyin.com/search/{encoded_kw}",
+        }
+
+        try:
+            r = requests.get(
+                "https://www.douyin.com/aweme/v1/web/general/search/single/",
+                params=params, headers=headers, timeout=15
+            )
+            data = r.json()
+        except Exception as e:
+            return [{"platform": "抖音", "title": f"❌ 请求失败: {str(e)[:50]}", "text": ""}]
+
+        items = data.get("data", [])
+        if not items:
+            msg = data.get("status_msg", "") or data.get("search_nil_info", {}).get("search_nil_type", "无结果")
+            return [{"platform": "抖音", "title": f"未找到结果 ({msg})", "text": ""}]
+
+        max_n = int(await self._get_config("max_results", 10))
+        results = []
+        for item in items[:max_n]:
             try:
-                await page.wait_for_selector(".search-result-card", timeout=15000)
-            except Exception:
-                pass
-            await asyncio.sleep(2)
+                aweme_id = item.get("aweme_id", "")
+                title = (item.get("title", "") or item.get("desc", "") or "无标题").strip()
+                author = item.get("author", "")
+                if isinstance(author, dict):
+                    author = author.get("nickname", "")
+                stats = item.get("statistics", {}) or {}
+                digg = stats.get("digg_count", "")
+                url = f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""
 
-            cards = await page.query_selector_all(".search-result-card")
-            max_n = int(await self._get_config("max_results", 10))
+                results.append({
+                    "platform": "抖音",
+                    "title": title[:80],
+                    "author": str(author)[:20],
+                    "likes": str(digg),
+                    "url": url,
+                    "text": title,
+                })
+            except:
+                continue
 
-            for card in cards[:max_n]:
-                try:
-                    title_el = await card.query_selector(".title")
-                    title = (await title_el.inner_text()).strip() if title_el else "无标题"
-
-                    link_el = await card.query_selector("a")
-                    link = ""
-                    if link_el:
-                        link = await link_el.get_attribute("href") or ""
-                        if link and not link.startswith("http"):
-                            link = "https://www.douyin.com" + link
-
-                    desc_el = await card.query_selector(".search-result-card-desc")
-                    desc = (await desc_el.inner_text()).strip()[:100] if desc_el else ""
-
-                    stats_el = await card.query_selector(".search-result-card-stats")
-                    stats = (await stats_el.inner_text()).strip() if stats_el else ""
-
-                    results.append({
-                        "platform": "抖音",
-                        "title": title,
-                        "desc": desc,
-                        "url": link,
-                        "likes": stats,
-                        "text": title + " " + desc
-                    })
-                except Exception:
-                    continue
-        finally:
-            await page.close()
-            await context.close()
-
-        logger.info(f"[ContentSearch] 抖音获取到 {len(results)} 条")
         return results
 
     def _deduplicate(self, items: list, threshold: int = 85) -> list:
-        """SimHash 去重"""
         unique = []
         seen = []
-
         for item in items:
             text = item.get("text", "")
-            if not text:
+            if not text or text.startswith("❌") or text.startswith("未找到"):
                 unique.append(item)
                 continue
-
-            # 完全一样直接跳过
-            if any(text == s for s in seen):
-                continue
-
             try:
                 h1 = Simhash(text)
                 is_dup = False
                 for s in seen:
                     if s:
                         h2 = Simhash(s)
-                        sim = h1.similarity(h2)
-                        if sim * 100 >= threshold:
+                        if h1.similarity(h2) * 100 >= threshold:
                             is_dup = True
                             break
                 if not is_dup:
                     seen.append(text)
                     unique.append(item)
-            except Exception:
+            except:
                 seen.append(text)
                 unique.append(item)
-
-        logger.info(f"[ContentSearch] 去重: {len(items)} → {len(unique)}")
         return unique
 
-    def _format_results(self, platform: str, keyword: str, items: list) -> str:
-        """格式化搜索结果"""
+    def _format_results(self, keyword: str, items: list) -> str:
         if not items:
             return "没有找到结果"
+        
+        # Filter out error messages
+        real_items = [i for i in items if not i["title"].startswith("❌") and not i["title"].startswith("未找到")]
+        errors = [i for i in items if i["title"].startswith("❌") or i["title"].startswith("未找到")]
 
-        lines = [f"🔍 「{keyword}」搜索结果（{platform}）\n"]
+        lines = [f"🔍 「{keyword}」搜索结果\n"]
+        
+        if errors:
+            lines.append(f"⚠️ {errors[0]['title']}\n")
 
-        for i, item in enumerate(items[:20], 1):
-            p = item.get("platform", "")
-            t = item.get("title", "无标题")[:40]
-            d = item.get("desc", "")
-            u = item.get("url", "")
+        for i, item in enumerate(real_items[:20], 1):
+            t = item.get("title", "")[:60]
+            a = item.get("author", "")
             l = item.get("likes", "")
-
-            icon = "📕" if "小红书" in p else "🎵"
-            lines.append(f"{i}. {icon} **{t}**")
-            if d:
-                lines.append(f"   {d[:60]}")
+            u = item.get("url", "")
+            lines.append(f"{i}. 🎵 **{t}**")
+            if a:
+                lines.append(f"   👤 {a}")
             if l:
                 lines.append(f"   👍 {l}")
+            if u:
+                lines.append(f"   🔗 {u}")
             lines.append("")
 
-        lines.append(f"共 {len(items)} 条结果（已去重）")
+        lines.append(f"共 {len(real_items)} 条结果（已去重）")
         return "\n".join(lines)
 
-    async def _set_cookies(self, context, domain: str, cookie_str: str):
-        """从 Cookie 字符串设置浏览器 Cookie"""
+    @filter.command("搜索")
+    async def search_cmd(self, event: AstrMessageEvent):
+        msg = event.message_str.strip()
+        parts = msg.split(maxsplit=2)
+        if len(parts) < 3:
+            yield event.plain_result("格式：/搜索 <平台> <关键词>\n平台：抖音、B站")
+            return
+
+        platform = parts[1]
+        keyword = parts[2]
+
+        yield event.plain_result(f"🔍 正在搜索「{keyword}」...")
+
         try:
-            cookies = []
-            for item in cookie_str.split(";"):
-                item = item.strip()
-                if "=" in item:
-                    name, value = item.split("=", 1)
-                    cookies.append({
-                        "name": name.strip(),
-                        "value": value.strip(),
-                        "domain": domain,
-                        "path": "/"
-                    })
-            if cookies:
-                await context.add_cookies(cookies)
-                logger.info(f"[ContentSearch] 已设置 {len(cookies)} 个 Cookie")
+            results = []
+            if platform in ("抖音", "全部"):
+                items = await self._search_douyin(keyword)
+                results.extend(items)
+
+            if not results:
+                yield event.plain_result("没有找到结果")
+                return
+
+            threshold = int(await self._get_config("similarity_threshold", 85))
+            unique = self._deduplicate(results, threshold)
+            reply = self._format_results(keyword, unique)
+            yield event.plain_result(reply)
+
         except Exception as e:
-            logger.warning(f"[ContentSearch] 设置 Cookie 失败: {e}")
+            logger.error(f"[ContentSearch] 异常: {e}")
+            yield event.plain_result(f"❌ 搜索失败: {str(e)[:200]}")
 
     async def terminate(self):
         if self._browser:
             await self._browser.close()
-            logger.info("[ContentSearch] 浏览器已关闭")
-
-
-def _encode(text: str) -> str:
-    """简单的 URL 编码"""
-    from urllib.parse import quote
-    return quote(text)
