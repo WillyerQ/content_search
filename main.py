@@ -135,33 +135,7 @@ class ContentSearchPlugin(Star):
             return self._extract_dy_videos(all_data[:max_n*2])
         except Exception as e:
             logger.error(f"[ContentSearch] 抖音搜索失败: {e}")
-            return [{"platform": "抖音", "title": f"❌ 失败: {str(e)[:50]}", "text": ""}]
 
-        max_n = int(await self._get_config("max_results", 10))
-        results = []
-        for item in items[:max_n]:
-            try:
-                aweme_id = item.get("aweme_id", "")
-                title = (item.get("title", "") or item.get("desc", "") or "无标题").strip()
-                author = item.get("author", "")
-                if isinstance(author, dict):
-                    author = author.get("nickname", "")
-                stats = item.get("statistics", {}) or {}
-                digg = stats.get("digg_count", "")
-                url = f"https://www.douyin.com/video/{aweme_id}" if aweme_id else ""
-
-                results.append({
-                    "platform": "抖音",
-                    "title": title[:80],
-                    "author": str(author)[:20],
-                    "likes": str(digg),
-                    "url": url,
-                    "text": title,
-                })
-            except:
-                continue
-
-        return results
 
     def _deduplicate(self, items: list, threshold: int = 85) -> list:
         unique = []
