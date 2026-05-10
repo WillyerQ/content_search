@@ -46,7 +46,10 @@ class ContentSearchPlugin(Star):
 
     async def _get_config(self, key, default=None):
         try:
-            return self.context.get_config(key) or default
+            val = self.context.get_config(key)
+            if val is None or val == "" or hasattr(val, "get"):
+                return default
+            return val
         except:
             return default
 
@@ -131,7 +134,7 @@ class ContentSearchPlugin(Star):
             }""")
             await b.close()
             await p.stop()
-            max_n = int(await self._get_config("max_results", 10))
+            max_n = await self._get_config("max_results", 10)
             return self._extract_dy_videos(all_data[:max_n*2])
         except Exception as e:
             logger.error(f"[ContentSearch] 抖音搜索失败: {e}")
@@ -215,7 +218,7 @@ class ContentSearchPlugin(Star):
                 yield event.plain_result("没有找到结果")
                 return
 
-            threshold = int(await self._get_config("similarity_threshold", 85))
+            threshold = await self._get_config("similarity_threshold", 85)
             unique = self._deduplicate(results, threshold)
             reply = self._format_results(keyword, unique)
             yield event.plain_result(reply)
