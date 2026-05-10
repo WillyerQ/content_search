@@ -95,6 +95,32 @@ class ContentSearchPlugin(Star):
         js = self._get_douyin_js()
         return js.call("sign", query, ua)
 
+    def _extract_dy_videos(self, html_items: list) -> list:
+        """从 Playwright 提取的视频数据中解析"""
+        results = []
+        for item in html_items:
+            try:
+                vid = item.get("aweme_id", "")
+                title = item.get("desc", "")[:80]
+                author = ""
+                if isinstance(item.get("author"), dict):
+                    author = item["author"].get("nickname", "")
+                stats = item.get("statistics", {}) or {}
+                digg = str(stats.get("digg_count", "")) if isinstance(stats, dict) else ""
+                url = f"https://www.douyin.com/video/{vid}" if vid else ""
+                if title or url:
+                    results.append({
+                        "platform": "抖音",
+                        "title": title or "无标题",
+                        "author": author,
+                        "likes": digg,
+                        "url": url,
+                        "text": title,
+                    })
+            except:
+                continue
+        return results
+
     async def _search_douyin(self, keyword: str) -> list:
         logger.info(f"[ContentSearch] 搜索抖音: {keyword}")
         try:
