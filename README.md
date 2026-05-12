@@ -9,8 +9,9 @@
 | 功能 | 状态 |
 |------|------|
 | 🎵 抖音搜索 | ✅ 可用（手机版 Playwright，无需 Cookie） |
+| 🅱️ B站搜索 | ✅ 可用（桌面版 Playwright，无需 Cookie） |
+| 💬 微博搜索 | 🟡 需要 Cookie 配置 |
 | 📕 小红书搜索 | 🚧 开发中（IP 被封） |
-| 🅱️ B站搜索 | 📅 计划中 |
 | 💬 知乎搜索 | 📅 计划中 |
 | 🔄 SimHash 自动去重 | ✅ 已实现 |
 
@@ -32,12 +33,14 @@ git clone https://github.com/WillyerQ/content_search.git
 | max_results | 每个平台最大返回条数（默认 10） |
 | similarity_threshold | 相似度阈值 0-100，高于此值视为重复（默认 85） |
 
-抖音搜索不需要 Cookie，开箱即用。
+抖音、B站不需要 Cookie，开箱即用。微博需要配置 Cookie。
 
 ## 指令
 
 ```
 /搜索 抖音 <关键词>
+/搜索 B站 <关键词>
+/搜索 微博 <关键词>
 /搜索 全部 <关键词>
 ```
 

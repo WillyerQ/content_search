@@ -25,5 +25,11 @@
     "description": "是否无头模式（设为 false 可看到浏览器窗口）",
     "type": "bool",
     "default": true
+  },
+  "wb_cookie": {
+    "description": "微博网页版 Cookie（登录后复制）",
+    "type": "string",
+    "default": "",
+    "hint": "支持常规字符串和 JSON 数组两种格式"
   }
 }

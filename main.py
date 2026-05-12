@@ -166,6 +166,93 @@ class ContentSearchPlugin(Star):
             logger.error(f"[ContentSearch] 抖音搜索失败: {e}")
 
 
+
+
+    async def _search_bilibili(self, keyword: str) -> list:
+        logger.info(f"[ContentSearch] 搜索B站: {keyword}")
+        try:
+            from playwright.async_api import async_playwright
+            p = await async_playwright().start()
+            b = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            ctx = await b.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                viewport={"width": 1280, "height": 720}
+            )
+            page = await ctx.new_page()
+            await page.goto(f"https://search.bilibili.com/all?keyword={keyword}", wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            
+            items = await page.evaluate("""() => {
+                const results = [];
+                document.querySelectorAll('.video-list .video-item').forEach(card => {
+                    const titleEl = card.querySelector('.title a, .video-title a');
+                    const authorEl = card.querySelector('.up-name, .username');
+                    const link = titleEl || card.querySelector('a');
+                    if (link) {
+                        results.push({
+                            title: (titleEl ? titleEl.textContent.trim() : '').slice(0, 80),
+                            href: link.href or '',
+                            author: authorEl ? authorEl.textContent.trim() : ''
+                        });
+                    }
+                });
+                return results;
+            }""")
+            await b.close()
+            await p.stop()
+            
+            return [{"platform": "B站", "title": i.get("title",""), "author": i.get("author",""), "url": i.get("href",""), "text": i.get("title","")} for i in items if i.get("title")]
+        except Exception as e:
+            logger.error(f"[ContentSearch] B站搜索失败: {e}")
+            return [{"platform": "B站", "title": f"失败: {str(e)[:50]}", "text": ""}]
+
+    async def _search_weibo(self, keyword: str) -> list:
+        logger.info(f"[ContentSearch] 搜索微博: {keyword}")
+        try:
+            from playwright.async_api import async_playwright
+            p = await async_playwright().start()
+            b = await p.chromium.launch(headless=True, args=["--no-sandbox"])
+            ctx = await b.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                viewport={"width": 1280, "height": 720}
+            )
+            cookie_str = await self._get_config("wb_cookie", "")
+            if cookie_str:
+                for item in self._parse_cookie(cookie_str).split(";"):
+                    item = item.strip()
+                    if "=" in item and all(ord(c) < 128 for c in item):
+                        n, v = item.split("=", 1)
+                        try: await ctx.add_cookies([{"name": n.strip(), "value": v.strip(), "domain": ".weibo.com", "path": "/"}])
+                        except: pass
+            
+            page = await ctx.new_page()
+            await page.goto(f"https://s.weibo.com/weibo?q={keyword}", wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(5000)
+            
+            items = await page.evaluate("""() => {
+                const results = [];
+                document.querySelectorAll('.card-wrap').forEach(card => {
+                    const textEl = card.querySelector('.txt, .weibo-text');
+                    const authorEl = card.querySelector('.name, .username');
+                    const linkEl = card.querySelector('a[href*="weibo.com"]');
+                    if (linkEl) {
+                        results.push({
+                            text: textEl ? textEl.textContent.trim().slice(0, 100) : '',
+                            author: authorEl ? authorEl.textContent.trim() : '',
+                            href: linkEl.href
+                        });
+                    }
+                });
+                return results.slice(0, 15);
+            }""")
+            await b.close()
+            await p.stop()
+            
+            return [{"platform": "微博", "title": i.get("text",""), "author": i.get("author",""), "url": i.get("href",""), "text": i.get("text","")} for i in items if i.get("text")]
+        except Exception as e:
+            logger.error(f"[ContentSearch] 微博搜索失败: {e}")
+            return [{"platform": "微博", "title": f"失败: {str(e)[:50]}", "text": ""}]
+
     def _deduplicate(self, items: list, threshold: int = 85) -> list:
         unique = []
         seen = []
@@ -226,7 +313,7 @@ class ContentSearchPlugin(Star):
         msg = event.message_str.strip()
         parts = msg.split(maxsplit=2)
         if len(parts) < 3:
-            yield event.plain_result("格式：/搜索 <平台> <关键词>\n平台：抖音、B站")
+            yield event.plain_result("格式：/搜索 <平台> <关键词>\n平台：抖音、B站、微博、全部")
             return
 
         platform = parts[1]
@@ -237,8 +324,11 @@ class ContentSearchPlugin(Star):
         try:
             results = []
             if platform in ("抖音", "全部"):
-                items = await self._search_douyin(keyword)
-                results.extend(items)
+                results.extend(await self._search_douyin(keyword))
+            if platform in ("B站", "b站", "bilibili", "全部"):
+                results.extend(await self._search_bilibili(keyword))
+            if platform in ("微博", "wb", "全部"):
+                results.extend(await self._search_weibo(keyword))
 
             if not results:
                 yield event.plain_result("没有找到结果")
