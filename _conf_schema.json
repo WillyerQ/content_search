@@ -31,5 +31,11 @@
     "type": "string",
     "default": "",
     "hint": "支持常规字符串和 JSON 数组两种格式"
+  },
+  "bili_cookie": {
+    "description": "B站网页版 Cookie（登录 bilibili.com 后复制）",
+    "type": "string",
+    "default": "",
+    "hint": "支持常规字符串和 JSON 数组两种格式"
   }
 }

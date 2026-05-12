@@ -179,6 +179,15 @@ class ContentSearchPlugin(Star):
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 viewport={"width": 1280, "height": 720}
             )
+            # Set B站 cookie if available
+            bili_cookie = await self._get_config("bili_cookie", "")
+            if bili_cookie:
+                for item in self._parse_cookie(bili_cookie).split(";"):
+                    item = item.strip()
+                    if "=" in item and all(ord(c) < 128 for c in item):
+                        n, v = item.split("=", 1)
+                        try: await ctx.add_cookies([{"name": n.strip(), "value": v.strip(), "domain": ".bilibili.com", "path": "/"}])
+                        except: pass
             page = await ctx.new_page()
             await page.goto(f"https://search.bilibili.com/all?keyword={keyword}", wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(3000)
