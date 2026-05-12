@@ -168,6 +168,7 @@ class ContentSearchPlugin(Star):
 
 
 
+            return [{"platform": "抖音", "title": f"❌ 失败: {str(e)[:50]}", "text": ""}]
     async def _search_bilibili(self, keyword: str) -> list:
         logger.info(f"[ContentSearch] 搜索B站: {keyword}")
         try:
