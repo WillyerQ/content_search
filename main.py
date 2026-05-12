@@ -191,7 +191,7 @@ class ContentSearchPlugin(Star):
                     if (link) {
                         results.push({
                             title: (titleEl ? titleEl.textContent.trim() : '').slice(0, 80),
-                            href: link.href or '',
+                            href: link.href || '',
                             author: authorEl ? authorEl.textContent.trim() : ''
                         });
                     }
